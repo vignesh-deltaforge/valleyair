@@ -1,0 +1,13 @@
+crawl4ai==0.6.0 
+docling==2.31.0 
+elasticsearch>=8.14.0
+ibm-watsonx-ai
+numpy
+tqdm
+python-dotenv
+langchain
+langchain-ibm
+langchain_community
+langchain-elasticsearch
+Flask==3.1.0
+flask-cors==4.0.0
