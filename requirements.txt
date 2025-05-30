@@ -11,3 +11,7 @@ langchain_community
 langchain-elasticsearch
 Flask==3.1.0
 flask-cors==4.0.0
+langgraph
+rank_bm25
+sentence-transformers
+streamlit

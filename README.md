@@ -1,140 +1,185 @@
-# Valley Air RAG Pipeline
+# Valley Air RAG Chatbot & Pipeline
 
-## Getting Started: Python Virtual Environment Setup
-
-It is highly recommended to use a Python 3.11 virtual environment for this project. Follow these steps before running any scripts:
-
-1. **Create a virtual environment (Python 3.11):**
-   ```bash
-   python3.11 -m venv venv
-   ```
-2. **Activate the virtual environment:**
-   - On macOS/Linux:
-     ```bash
-     source venv/bin/activate
-     ```
-   - On Windows:
-     ```bash
-     venv\Scripts\activate
-     ```
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+A modular, production-grade Retrieval-Augmented Generation (RAG) system for the San Joaquin Valley Air Pollution Control District (Valley Air). This project enables web-scale document ingestion, semantic search, and conversational Q&A via both web and CLI interfaces.
 
 ---
 
-This project implements a full pipeline for building a Retrieval-Augmented Generation (RAG) chatbot for the San Joaquin Valley Air Pollution Control District (Valley Air). The pipeline consists of three main stages:
+## 🚀 What Does This Project Do?
 
-1. **Web Crawling & Markdown Extraction** (`crawl_data.py`)
-2. **Embedding & Indexing in Elasticsearch** (`index_data.py`)
-3. **Conversational Chatbot (RAG) Web App** (`chat_app.py`)
+- **Crawls** the Valley Air website, extracting and cleaning content.
+- **Embeds** and **indexes** content into Elasticsearch using IBM watsonx.ai.
+- **Retrieves** relevant information using both semantic (vector) and keyword (BM25) search.
+- **Synthesizes** answers using a powerful LLM (IBM watsonx Granite).
+- **Serves** a modern chatbot UI via Flask and Streamlit, and a CLI for power users.
 
 ---
 
-## 1. Web Crawling & Markdown Extraction (`crawl_data.py`)
+## 🗂️ Codebase Structure
 
-### **Purpose**
-Fetches all URLs from the Valley Air sitemap, crawls each page, extracts the main content, and saves it as Markdown files (one per page) in the `output/` directory.
+```
+.
+├── config.py              # Loads environment variables and constants
+├── llm.py                 # LLM and embedding model setup (IBM watsonx)
+├── vectorstore.py         # Elasticsearch connection and vector store logic
+├── agents/                # All agent logic for the multi-step workflow
+│   ├── query_context.py   # Query rewriting and keyword extraction agent
+│   ├── retrieval.py       # Specialized retrieval agent (BM25 + vector)
+│   └── synthesis.py       # Response synthesis agents (sync/streaming)
+├── workflow.py            # LangGraph workflow and runner functions
+├── web/                   # Flask web app and HTML template
+│   └── routes.py          # Flask routes and chat UI
+├── tests/                 # Test scripts and helpers
+│   └── test_es.py         # Elasticsearch and embedding tests
+├── chat_app.py            # Entry point for CLI and Flask app
+├── app.py                 # Streamlit chat app (independent)
+├── crawl_data.py          # Web crawler and markdown extractor
+├── index_data.py          # Embedding and indexing pipeline
+├── output/                # Markdown files (created by crawl_data.py)
+├── requirements.txt
+└── .env                   # Your environment variables
+```
 
-### **How it works**
-- **Fetches the sitemap** (`https://www.valleyair.org/sitemap.xml`) and parses all URLs.
-- **Crawls each URL** using `crawl4ai.AsyncWebCrawler` with content pruning and tag exclusion (removes nav, footer, header).
-- **Extracts and cleans content**, generating Markdown for each page.
-- **Saves each page** as a Markdown file in the `output/` directory, with a sanitized filename based on the page title or URL.
+---
 
-### **Key Functions**
-- `sanitize_filename(name)`: Cleans a string for safe filenames.
-- `main()`: Orchestrates the crawling, extraction, and saving process.
+## 🧭 Pipeline Flow
 
-### **How to run**
+### 1. **Crawling & Extraction** (`crawl_data.py`)
+- Fetches all URLs from the Valley Air sitemap.
+- Crawls each page, extracts main content, and saves as Markdown in `output/`.
+
+### 2. **Embedding & Indexing** (`index_data.py`)
+- Reads Markdown files, generates embeddings with IBM watsonx.ai, and indexes them into Elasticsearch.
+
+### 3. **Conversational RAG Chatbot**
+- **User query** enters the LangGraph workflow (see below).
+- **QueryContextAgent**: Rewrites the query and generates BM25 keywords.
+- **SpecializedRetrievalAgent**: Retrieves relevant docs using both BM25 and vector search, then reranks with a cross-encoder.
+- **ResponseSynthesisAgent**: Synthesizes a concise, helpful answer using the LLM and retrieved context.
+
+---
+
+## 🤖 LangGraph Workflow
+
+```mermaid
+graph TD
+    A((User Query)) -->|Query| B[QueryContextAgent<br>Rewrites Query<br>Extracts BM25 Keywords]
+    B -->|Rewrites + Keywords| C[SpecializedRetrievalAgent<br>BM25 + Vector Search<br>Cross-Encoder Reranking]
+    C -->|Retrieved Documents| D[ResponseSynthesisAgent<br>Generates Answer<br>Compiles Sources]
+    D -->|Answer + Sources| E((Final Response))
+
+    style A fill:#f0f8ff,stroke:#4682b4
+    style E fill:#f0f8ff,stroke:#4682b4
+    style B fill:#e6e6fa,stroke:#6a5acd
+    style C fill:#e6e6fa,stroke:#6a5acd
+    style D fill:#e6e6fa,stroke:#6a5acd
+```
+
+- **QueryContextAgent**: Expands the user query for better retrieval.
+- **SpecializedRetrievalAgent**: Combines BM25 and vector search, deduplicates, and reranks results.
+- **ResponseSynthesisAgent**: Uses the LLM to generate a final answer, citing sources.
+
+---
+
+## 🏗️ Key Modules & Functions
+
+### `config.py`
+- Loads all environment variables (Elasticsearch, IBM watsonx, etc).
+
+### `llm.py`
+- Sets up the LLM (IBM watsonx Granite) and embedding model.
+- `IBMEmbeddingWrapper`: Adapter for embedding API.
+
+### `vectorstore.py`
+- Connects to Elasticsearch.
+- `CustomElasticsearchStore`: Handles document creation and retrieval.
+
+### `agents/`
+- **query_context.py**: `QueryContextAgent` rewrites queries and generates keywords.
+- **retrieval.py**: `SpecializedRetrievalAgent` performs hybrid retrieval and reranking.
+- **synthesis.py**: `ResponseSynthesisAgent` and `StreamingResponseSynthesisAgent` generate answers.
+
+### `workflow.py`
+- Wires up the agents using LangGraph.
+- `run_multiagent_workflow(user_query)`: Synchronous answer.
+- `run_multiagent_workflow_streaming(user_query)`: Streaming answer (for web/Streamlit).
+
+### `web/routes.py`
+- Flask web app with a modern chat UI.
+- `/` : Chat UI
+- `/chat` : API endpoint for chat
+
+### `app.py`
+- Streamlit chat app with real-time streaming and chat history.
+
+### `chat_app.py`
+- CLI and Flask entry point.
+- `--web` flag: Run Flask app.
+- No flag: Run CLI chatbot.
+- `--test` flag: Run ES/embedding tests.
+
+### `tests/test_es.py`
+- Diagnostic tests for Elasticsearch and embedding.
+
+---
+
+## 🖥️ How to Run
+
+### 1. **Install dependencies**
+```bash
+python3.11 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 2. **Set up `.env`**
+See the sample in the old README or below.
+
+### 3. **Crawl and index content**
 ```bash
 python crawl_data.py
-```
-- Output: Markdown files in the `output/` directory.
-
----
-
-## 2. Embedding & Indexing in Elasticsearch (`index_data.py`)
-
-### **Purpose**
-Reads the Markdown files from `output/`, generates embeddings for each chunk using IBM watsonx.ai, and indexes them into an Elasticsearch vector database.
-
-### **How it works**
-- **Loads environment variables** for Elasticsearch and IBM watsonx.ai credentials.
-- **Initializes Elasticsearch** (creates index if needed, with dense vector mapping).
-- **Initializes IBM watsonx.ai embedding model**.
-- **Processes each Markdown file**:
-  - Extracts the URL and content.
-  - Cleans unwanted lines.
-  - Splits content into chunks (~1000 characters).
-  - Generates embeddings for each chunk.
-  - Indexes each chunk (with embedding, content, URL, title, chunk index) into Elasticsearch.
-
-### **Key Functions**
-- `initialize_elasticsearch()`: Connects to ES, creates index if missing.
-- `initialize_watsonx()`: Sets up the IBM embedding model.
-- `chunk_text(text, chunk_size)`: Splits text into manageable chunks.
-- `process_file(file_path, embedding_model, es_client)`: Embeds and indexes a single file.
-- `main()`: Handles argument parsing, connection checks, and batch processing.
-
-### **How to run**
-```bash
 python index_data.py
 ```
-- Output: Chunks indexed in Elasticsearch.
 
-**To delete the Elasticsearch index:**
-```bash
-python index_data.py --delete-index
-```
+### 4. **Run the chatbot**
 
----
-
-## 3. Conversational Chatbot Web App (`chat_app.py`)
-
-### **Purpose**
-Provides a web-based (Flask) and CLI chatbot that answers user questions using RAG (Retrieval-Augmented Generation) over the indexed Valley Air content.
-
-### **How it works**
-- **Loads environment variables** for all credentials.
-- **Initializes the LLM** (Meta Llama 3 via IBM watsonx).
-- **Initializes the embedding model** (IBM watsonx).
-- **Connects to Elasticsearch** and sets up a custom vector store.
-- **Defines a prompt template** for the assistant, with guidelines for tone, structure, and edge cases.
-- **Retrieves relevant chunks** from Elasticsearch using vector search.
-- **Runs the LLM with context** to generate a concise, helpful answer.
-- **Web UI**: Flask app with a modern chat interface, showing sources for each answer.
-- **CLI**: Simple command-line chat loop.
-
-### **Key Functions**
-- `get_ai_response(user_input, min_score)`: Runs retrieval and LLM, returns answer and sources.
-- `run_tests()`: Diagnostic tests for ES and embedding.
-- Flask routes: `/` (chat UI), `/chat` (API endpoint).
-- `main()`: CLI chat loop.
-
-### **How to run**
-**Web app:**
+#### **Web (Flask)**
 ```bash
 python chat_app.py --web
+# Visit http://localhost:5001
 ```
-- Visit [http://localhost:5001](http://localhost:5001) in your browser.
 
-**CLI:**
+#### **CLI**
 ```bash
 python chat_app.py
 ```
 
-**Test connections:**
+#### **Streamlit (Modern UI)**
+```bash
+python app.py
+# Visit the Streamlit URL shown in the terminal
+```
+
+#### **Test Elasticsearch/Embedding**
 ```bash
 python chat_app.py --test
 ```
 
 ---
 
-## Environment Variables
+## 📝 Function & Flow Explanations
 
-All scripts require a `.env` file in the project root with the following variables:
+- **Crawling**: `crawl_data.py` uses `crawl4ai` to fetch and clean content, saving as Markdown.
+- **Indexing**: `index_data.py` chunks, embeds, and indexes content into Elasticsearch.
+- **Query Handling**: User queries are rewritten, expanded, and used for both BM25 and vector search.
+- **Retrieval**: Combines keyword and semantic search, deduplicates, and reranks with a cross-encoder.
+- **Synthesis**: LLM generates a concise answer, citing sources.
+- **Web/CLI/Streamlit**: All use the same backend workflow for consistent answers.
+
+---
+
+## ⚙️ Environment Variables
+
+Create a `.env` file in the project root:
 
 ```env
 # Elasticsearch
@@ -149,67 +194,30 @@ IBM_CLOUD_API_KEY=your_ibm_cloud_api_key
 IBM_CLOUD_ENDPOINT=https://your-ibm-cloud-endpoint
 IBM_CLOUD_PROJECT_ID=your_ibm_project_id
 
-# For LLM (chat_app.py only)
+# For LLM
 WATSONX_URL=https://your-ibm-watsonx-url
 WATSONX_PROJECT_ID=your_watsonx_project_id
 ```
 
-**Note:**  
-- The `WATSONX_URL` and `WATSONX_PROJECT_ID` are only required for the chatbot (LLM) in `chat_app.py`.
-- All credentials must be valid for IBM watsonx.ai and Elasticsearch with vector search enabled.
+---
+
+## 🧪 Testing
+
+- Run `python chat_app.py --test` to check Elasticsearch and embedding connectivity and sample queries.
 
 ---
 
-## Typical Pipeline Flow
+## 📚 Further Reading
 
-1. **Crawl and extract content:**
-   - `python crawl_data.py`
-2. **Embed and index content:**
-   - `python index_data.py`
-3. **Run the chatbot:**
-   - `python chat_app.py --web` (for web UI) or `python chat_app.py` (for CLI)
+- See `crawl_data.py` and `index_data.py` for details on crawling and indexing.
+- See `agents/` for agent logic and prompt engineering.
+- See `workflow.py` for the LangGraph workflow definition.
 
 ---
 
-## Dependencies
+## 📞 Contact
 
-Install all required packages (Python 3.8+ recommended):
-
-```bash
-pip install -r requirements.txt
-```
-
-**Key packages:**
-- `requests`, `beautifulsoup4`, `crawl4ai`
-- `elasticsearch`, `ibm-watsonx-ai`
-- `langchain`, `flask`, `tqdm`, `python-dotenv`
-
----
-
-## Directory Structure
-
-```
-.
-├── crawl_data.py
-├── index_data.py
-├── chat_app.py
-├── output/                # Markdown files (created by crawl_data.py)
-├── .env                   # Your environment variables
-└── requirements.txt
-```
-
----
-
-## Troubleshooting
-
-- Ensure your `.env` is correct and all services (Elasticsearch, IBM watsonx.ai) are accessible.
-- If you change the ES index mapping, delete and recreate the index (`python index_data.py --delete-index`).
-- For SSL issues with Elasticsearch, check your `ES_CERT_FINGERPRINT`.
-
----
-
-## Contact
-
-For questions about Valley Air, visit [valleyair.org](https://www.valleyair.org) or call 559-230-5800.
+For questions about this program, please email vmahalingam@daisourceconsult.com
+or call @ +91 9940683288
 
 --- 
