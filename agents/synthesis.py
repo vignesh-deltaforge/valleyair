@@ -61,8 +61,9 @@ class ResponseSynthesisAgent:
 class StreamingResponseSynthesisAgent:
     def __init__(self, llm):
         self.llm = llm
-    def stream(self, state: Dict[str, Any]):
+    def stream(self, state: Dict[str, Any], callback_handler=None):
         docs = state.get("retrieved_docs", [])
+        print("DEBUG: SynthesisAgent docs:", docs)
         context = "\n\n".join([doc.page_content if hasattr(doc, 'page_content') else doc["content"] for doc in docs])
         user_query = state.get("user_query", "")
         prompt = SYTHESIS_PROMPT.format(context=context, question=user_query)
@@ -82,6 +83,10 @@ class StreamingResponseSynthesisAgent:
             if not meta.get("title"):
                 meta["title"] = "Untitled"
             sources.append(meta)
+        print("DEBUG: SynthesisAgent sources:", sources)
         for chunk in self.llm.stream(prompt):
-            yield {"type": "token", "token": chunk}
+            if callback_handler is not None:
+                callback_handler.on_llm_new_token(chunk)
+            else:
+                yield {"type": "token", "token": chunk}
         yield {"type": "done", "sources": sources} 

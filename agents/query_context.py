@@ -65,7 +65,7 @@ class QueryContextAgent:
         print(f"Rewrites: {rewrites}")
         print(f"Keywords: {keywords}")
         return {"user_query": user_query, "rewrites": rewrites, "keywords": keywords, "messages": state.get("messages", [])}
-    def stream(self, state: AgentState):
+    def stream(self, state: AgentState, callback_handler=None):
         user_query = state.get("user_query")
         prompt = REWRITE_AND_KEYWORDS_PROMPT.format(query=user_query)
         response = self.llm.invoke(prompt)
@@ -77,5 +77,9 @@ class QueryContextAgent:
         except Exception:
             rewrites = [user_query]
             keywords = user_query.split()
-        yield {"type": "tool", "tool": "QueryContextAgent", "description": "Generated rewrites and keywords.", "rewrites": rewrites, "keywords": keywords}
-        yield {"type": "query_context_done", "rewrites": rewrites, "keywords": keywords} 
+        event = {"type": "tool", "tool": "QueryContextAgent", "description": "Generated rewrites and keywords.", "rewrites": rewrites, "keywords": keywords}
+        if callback_handler is not None:
+            callback_handler.on_tool_start("QueryContextAgent", "Generated rewrites and keywords.")
+        yield event
+        done_event = {"type": "query_context_done", "rewrites": rewrites, "keywords": keywords}
+        yield done_event 

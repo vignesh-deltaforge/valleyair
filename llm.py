@@ -10,7 +10,7 @@ llm = WatsonxLLM(
     project_id=WATSONX_PROJECT_ID,
     params={
         "decoding_method": "sample",
-        "max_new_tokens": 256,
+        "max_new_tokens": 512,
         "min_new_tokens": 1,
         "temperature": 0.5,
         "top_k": 50,

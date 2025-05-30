@@ -1,6 +1,6 @@
 # Valley Air RAG Chatbot & Pipeline
 
-A modular, production-grade Retrieval-Augmented Generation (RAG) system for the San Joaquin Valley Air Pollution Control District (Valley Air). This project enables web-scale document ingestion, semantic search, and conversational Q&A via both web and CLI interfaces.
+A modular, production-grade Retrieval-Augmented Generation (RAG) system for the San Joaquin Valley Air Pollution Control District (Valley Air). This project enables web-scale document ingestion, semantic search, and conversational Q&A via both a modern Streamlit UI, Flask web, and CLI interfaces.
 
 ---
 
@@ -8,9 +8,22 @@ A modular, production-grade Retrieval-Augmented Generation (RAG) system for the 
 
 - **Crawls** the Valley Air website, extracting and cleaning content.
 - **Embeds** and **indexes** content into Elasticsearch using IBM watsonx.ai.
-- **Retrieves** relevant information using both semantic (vector) and keyword (BM25) search.
+- **Retrieves** relevant information using both semantic (vector) and keyword (BM25) search, then reranks with a cross-encoder.
 - **Synthesizes** answers using a powerful LLM (IBM watsonx Granite).
-- **Serves** a modern chatbot UI via Flask and Streamlit, and a CLI for power users.
+- **Serves** a modern chatbot UI via Streamlit (with streaming, chat history, reset, and transcript download), Flask, and a CLI for power users.
+- **Privacy-first**: All chat is stateless and not stored server-side.
+
+---
+
+## 🖥️ Streamlit Chatbot UI
+
+- **Real-time streaming**: Answers stream in as the LLM generates them.
+- **Chat history**: See your full conversation, including sources for each answer.
+- **Reset**: Instantly clear your chat history.
+- **Download transcript**: Save your conversation as a text file.
+- **Context display**: See how your query was expanded and what keywords were used for retrieval.
+- **Source attribution**: Every answer cites its sources (or notes if none are available).
+- **No data retention**: Your chat is private and not stored on the server.
 
 ---
 
@@ -23,18 +36,18 @@ A modular, production-grade Retrieval-Augmented Generation (RAG) system for the 
 ├── vectorstore.py         # Elasticsearch connection and vector store logic
 ├── agents/                # All agent logic for the multi-step workflow
 │   ├── query_context.py   # Query rewriting and keyword extraction agent
-│   ├── retrieval.py       # Specialized retrieval agent (BM25 + vector)
+│   ├── retrieval.py       # Specialized retrieval agent (BM25 + vector + cross-encoder)
 │   └── synthesis.py       # Response synthesis agents (sync/streaming)
 ├── workflow.py            # LangGraph workflow and runner functions
+├── app.py                 # Streamlit chat app (modern UI)
+├── chat_app.py            # Entry point for CLI and Flask app
 ├── web/                   # Flask web app and HTML template
 │   └── routes.py          # Flask routes and chat UI
-├── tests/                 # Test scripts and helpers
-│   └── test_es.py         # Elasticsearch and embedding tests
-├── chat_app.py            # Entry point for CLI and Flask app
-├── app.py                 # Streamlit chat app (independent)
 ├── crawl_data.py          # Web crawler and markdown extractor
 ├── index_data.py          # Embedding and indexing pipeline
 ├── output/                # Markdown files (created by crawl_data.py)
+├── tests/                 # Test scripts and helpers
+│   └── test_es.py         # Elasticsearch and embedding tests
 ├── requirements.txt
 └── .env                   # Your environment variables
 ```
@@ -54,11 +67,11 @@ A modular, production-grade Retrieval-Augmented Generation (RAG) system for the 
 - **User query** enters the LangGraph workflow (see below).
 - **QueryContextAgent**: Rewrites the query and generates BM25 keywords.
 - **SpecializedRetrievalAgent**: Retrieves relevant docs using both BM25 and vector search, then reranks with a cross-encoder.
-- **ResponseSynthesisAgent**: Synthesizes a concise, helpful answer using the LLM and retrieved context.
+- **ResponseSynthesisAgent**/**StreamingResponseSynthesisAgent**: Synthesizes a concise, helpful answer using the LLM and retrieved context, with streaming support for the UI.
 
 ---
 
-## 🤖 LangGraph Workflow
+## 🤖 Multi-Agent Workflow (LangGraph)
 
 ```mermaid
 graph TD
@@ -74,42 +87,34 @@ graph TD
     style D fill:#e6e6fa,stroke:#6a5acd
 ```
 
-- **QueryContextAgent**: Expands the user query for better retrieval.
-- **SpecializedRetrievalAgent**: Combines BM25 and vector search, deduplicates, and reranks results.
-- **ResponseSynthesisAgent**: Uses the LLM to generate a final answer, citing sources.
+- **QueryContextAgent**: Expands the user query for better retrieval (rewrites + BM25 keywords).
+- **SpecializedRetrievalAgent**: Combines BM25 and vector search, deduplicates, and reranks results with a cross-encoder.
+- **ResponseSynthesisAgent**/**StreamingResponseSynthesisAgent**: Uses the LLM to generate a final answer, citing sources, with streaming for the UI.
 
 ---
 
 ## 🏗️ Key Modules & Functions
 
-### `config.py`
-- Loads all environment variables (Elasticsearch, IBM watsonx, etc).
-
-### `llm.py`
-- Sets up the LLM (IBM watsonx Granite) and embedding model.
-- `IBMEmbeddingWrapper`: Adapter for embedding API.
-
-### `vectorstore.py`
-- Connects to Elasticsearch.
-- `CustomElasticsearchStore`: Handles document creation and retrieval.
-
-### `agents/`
-- **query_context.py**: `QueryContextAgent` rewrites queries and generates keywords.
-- **retrieval.py**: `SpecializedRetrievalAgent` performs hybrid retrieval and reranking.
-- **synthesis.py**: `ResponseSynthesisAgent` and `StreamingResponseSynthesisAgent` generate answers.
+### `app.py`
+- Streamlit chat app with real-time streaming, chat history, reset, transcript download, and context display.
+- Stateless: All chat history is session-based and not stored server-side.
 
 ### `workflow.py`
 - Wires up the agents using LangGraph.
 - `run_multiagent_workflow(user_query)`: Synchronous answer.
-- `run_multiagent_workflow_streaming(user_query)`: Streaming answer (for web/Streamlit).
+- `run_multiagent_workflow_streaming(user_query, callback_handler)`: Streaming answer (for Streamlit UI), with callback support for real-time token and event updates.
 
-### `web/routes.py`
-- Flask web app with a modern chat UI.
-- `/` : Chat UI
-- `/chat` : API endpoint for chat
+### `agents/`
+- **query_context.py**: `QueryContextAgent` rewrites queries and generates keywords for hybrid retrieval.
+- **retrieval.py**: `SpecializedRetrievalAgent` performs hybrid retrieval (BM25 + vector), deduplication, and cross-encoder reranking.
+- **synthesis.py**: `ResponseSynthesisAgent` and `StreamingResponseSynthesisAgent` generate answers, with streaming support for the UI.
 
-### `app.py`
-- Streamlit chat app with real-time streaming and chat history.
+### `vectorstore.py`
+- Connects to Elasticsearch.
+- Handles document creation, retrieval, and metadata enrichment.
+
+### `llm.py`
+- Sets up the LLM (IBM watsonx Granite) and embedding model.
 
 ### `chat_app.py`
 - CLI and Flask entry point.
@@ -119,6 +124,30 @@ graph TD
 
 ### `tests/test_es.py`
 - Diagnostic tests for Elasticsearch and embedding.
+
+### 🔄 Real-Time Streaming & Callback Handlers
+
+The Streamlit UI leverages a **callback handler** and event-driven streaming to provide a responsive, interactive chat experience:
+
+- **StreamingResponseSynthesisAgent** and **QueryContextAgent** both support streaming output and event callbacks.
+- The `StreamlitCallbackHandler` in `app.py` receives:
+  - **LLM tokens** as they are generated (for real-time answer streaming)
+  - **Tool events** (e.g., when retrieval or context expansion starts)
+  - **Query context** (rewrites and keywords used for retrieval)
+  - **Completion events** (when the answer and sources are ready)
+- The callback handler updates the UI in real time, showing partial answers, context, and sources as soon as they are available.
+
+**Event types include:**
+- `token`: A new token from the LLM (for streaming answer display)
+- `tool`: A tool/agent has started or completed an action (e.g., retrieval)
+- `query_context`: The agent has generated query rewrites and keywords
+- `done`: The answer and sources are finalized
+
+**Relevant code:**
+- See `app.py` for the `StreamlitCallbackHandler` and event handling logic.
+- See `workflow.py` for how agents emit events and how the callback handler is integrated.
+
+This architecture ensures the user sees immediate feedback and context, making the chatbot feel fast and interactive.
 
 ---
 
@@ -132,7 +161,7 @@ pip install -r requirements.txt
 ```
 
 ### 2. **Set up `.env`**
-See the sample in the old README or below.
+See the sample below.
 
 ### 3. **Crawl and index content**
 ```bash
@@ -141,6 +170,12 @@ python index_data.py
 ```
 
 ### 4. **Run the chatbot**
+
+#### **Streamlit (Modern UI)**
+```bash
+python app.py
+# Visit the Streamlit URL shown in the terminal
+```
 
 #### **Web (Flask)**
 ```bash
@@ -151,12 +186,6 @@ python chat_app.py --web
 #### **CLI**
 ```bash
 python chat_app.py
-```
-
-#### **Streamlit (Modern UI)**
-```bash
-python app.py
-# Visit the Streamlit URL shown in the terminal
 ```
 
 #### **Test Elasticsearch/Embedding**
@@ -172,7 +201,7 @@ python chat_app.py --test
 - **Indexing**: `index_data.py` chunks, embeds, and indexes content into Elasticsearch.
 - **Query Handling**: User queries are rewritten, expanded, and used for both BM25 and vector search.
 - **Retrieval**: Combines keyword and semantic search, deduplicates, and reranks with a cross-encoder.
-- **Synthesis**: LLM generates a concise answer, citing sources.
+- **Synthesis**: LLM generates a concise answer, citing sources, with streaming for the UI.
 - **Web/CLI/Streamlit**: All use the same backend workflow for consistent answers.
 
 ---
@@ -207,11 +236,22 @@ WATSONX_PROJECT_ID=your_watsonx_project_id
 
 ---
 
+## 🧩 Extending & Customizing Agents
+
+- **Add new agents**: Create a new agent in `agents/` and add it to the workflow in `workflow.py` using LangGraph.
+- **Customize prompts**: Edit the prompt templates in `agents/query_context.py` or `agents/synthesis.py` for different behaviors or domains.
+- **Change retrieval logic**: Modify `SpecializedRetrievalAgent` in `agents/retrieval.py` to adjust how BM25, vector, or reranking is performed.
+- **Swap LLMs or embeddings**: Update `llm.py` and `vectorstore.py` to use different models or providers.
+- **UI customization**: Edit `app.py` for Streamlit UI changes, or `web/routes.py` for Flask.
+
+---
+
 ## 📚 Further Reading
 
 - See `crawl_data.py` and `index_data.py` for details on crawling and indexing.
 - See `agents/` for agent logic and prompt engineering.
 - See `workflow.py` for the LangGraph workflow definition.
+- See `app.py` for Streamlit UI logic and callback streaming.
 
 ---
 

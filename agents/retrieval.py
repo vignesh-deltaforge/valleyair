@@ -20,7 +20,7 @@ class SpecializedRetrievalAgent:
         bm25_top_indices = sorted(range(len(bm25_scores)), key=lambda i: -bm25_scores[i])[:10]
         bm25_docs = [self.docs_corpus[i] for i in bm25_top_indices]
         # Vector retrieval (using retriever to ensure metadata)
-        vector_results = vector_retriever.get_relevant_documents(rewrites[0])
+        vector_results = vector_retriever.invoke(rewrites[0])
         # Combine and deduplicate, always prefer Document with metadata over dict
         all_docs = {}
         for i, doc in enumerate(vector_results):
@@ -81,4 +81,6 @@ class SpecializedRetrievalAgent:
                 enriched_docs.append(enriched_doc)
             else:
                 enriched_docs.append(doc)
+        print("DEBUG: RetrievalAgent top_docs:", top_docs)
+        print("DEBUG: RetrievalAgent enriched_docs:", enriched_docs)
         return {**state, "retrieved_docs": enriched_docs} 

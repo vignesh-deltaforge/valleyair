@@ -36,18 +36,27 @@ def run_multiagent_workflow(user_query):
     result = graph.invoke(state)
     return result.get("answer", ""), result.get("sources", [])
 
-def run_multiagent_workflow_streaming(user_query):
+def run_multiagent_workflow_streaming(user_query, callback_handler=None):
     state = {"user_query": user_query, "messages": []}
-    query_stream = query_agent.stream(state)
-    for event in query_stream:
-        if event["type"] == "tool":
-            yield event
-            state["rewrites"] = event["rewrites"]
-            state["keywords"] = event["keywords"]
-        elif event["type"] == "query_context_done":
-            state["rewrites"] = event["rewrites"]
-            state["keywords"] = event["keywords"]
+    # Query context agent (streaming)
+    rewrites = None
+    keywords = None
+    for event in query_agent.stream(state, callback_handler=callback_handler):
+        yield event  # Always yield the event, regardless of callback_handler
+        # Always update state with rewrites/keywords if present
+        if event.get("rewrites") is not None:
+            rewrites = event["rewrites"]
+        if event.get("keywords") is not None:
+            keywords = event["keywords"]
+    # Ensure state is updated for retrieval agent
+    if rewrites is not None:
+        state["rewrites"] = rewrites
+    if keywords is not None:
+        state["keywords"] = keywords
+    # Retrieval agent (not streaming, but can call callback for tool event)
+    if callback_handler is not None:
+        callback_handler.on_tool_start("SpecializedRetrievalAgent", "Retrieving relevant documents from Elasticsearch and BM25.")
     state = retrieval_agent(state)
-    yield {"type": "tool", "tool": "SpecializedRetrievalAgent", "description": "Retrieved relevant documents from Elasticsearch and BM25."}
-    for event in streaming_synth_agent.stream(state):
-        yield event 
+    # Synthesis agent (streaming)
+    for event in streaming_synth_agent.stream(state, callback_handler=callback_handler):
+        yield event  # Always yield the event, regardless of callback_handler 
