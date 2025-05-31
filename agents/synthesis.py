@@ -7,7 +7,7 @@ SYTHESIS_PROMPT = PromptTemplate(
 <|start_of_role|>system<|end_of_role|>You are Granite, developed by xAI, acting as an AI assistant for the San Joaquin Valley Air Pollution Control District (Valley Air), dedicated to improving air quality in California's Central Valley. Your goal is to provide accurate, concise, and helpful answers based on valleyair.org content and the provided context. Today's date: May 30, 2025.
 
 **Instructions**:
-1. Use the provided context from valleyair.org to answer the user's question in 1-2 sentences.
+1. Use the provided context from valleyair.org and any real-time air quality data to answer the user's question in 1-2 sentences.
 2. Adopt a friendly, professional tone, explaining technical terms (e.g., AQI, PM2.5) in simple language for residents, businesses, and community members.
 3. If the question seeks details (e.g., "benefits"), include a short bulleted list of specific points (e.g., financial, environmental benefits).
 4. Suggest a follow-up action (e.g., visit valleyair.org/grants, call 559-230-5800).
@@ -36,7 +36,11 @@ class ResponseSynthesisAgent:
         self.llm = llm
     def __call__(self, state: Dict[str, Any]) -> Dict[str, Any]:
         docs = state.get("retrieved_docs", [])
+        air_quality = state.get("air_quality_data")
         context = "\n\n".join([doc.page_content if hasattr(doc, 'page_content') else doc["content"] for doc in docs])
+        if air_quality:
+            aq_context = f"\n\n[Real-time Air Quality]\nAQI: {air_quality.get('aqi')} ({air_quality.get('aqi_category')})\nPM2.5: {air_quality.get('pm2_5')} µg/m³\nOzone: {air_quality.get('ozone')} ppb\nSource: https://open-meteo.com/en/docs/air-quality-api"
+            context = aq_context + "\n" + context
         user_query = state.get("user_query", "")
         prompt = SYTHESIS_PROMPT.format(context=context, question=user_query)
         answer = self.llm.invoke(prompt)
@@ -56,6 +60,9 @@ class ResponseSynthesisAgent:
             if not meta.get("title"):
                 meta["title"] = "Untitled"
             sources.append(meta)
+        # Only add air quality API source if it is present in the state
+        if "sources" in state and state["sources"]:
+            sources.extend(state["sources"])
         return {**state, "answer": answer, "sources": sources}
 
 class StreamingResponseSynthesisAgent:
@@ -63,8 +70,11 @@ class StreamingResponseSynthesisAgent:
         self.llm = llm
     def stream(self, state: Dict[str, Any], callback_handler=None):
         docs = state.get("retrieved_docs", [])
-        print("DEBUG: SynthesisAgent docs:", docs)
+        air_quality = state.get("air_quality_data")
         context = "\n\n".join([doc.page_content if hasattr(doc, 'page_content') else doc["content"] for doc in docs])
+        if air_quality:
+            aq_context = f"\n\n[Real-time Air Quality]\nAQI: {air_quality.get('aqi')} ({air_quality.get('aqi_category')})\nPM2.5: {air_quality.get('pm2_5')} µg/m³\nOzone: {air_quality.get('ozone')} ppb\nSource: https://open-meteo.com/en/docs/air-quality-api"
+            context = aq_context + "\n" + context
         user_query = state.get("user_query", "")
         prompt = SYTHESIS_PROMPT.format(context=context, question=user_query)
         sources = []
@@ -83,10 +93,16 @@ class StreamingResponseSynthesisAgent:
             if not meta.get("title"):
                 meta["title"] = "Untitled"
             sources.append(meta)
-        print("DEBUG: SynthesisAgent sources:", sources)
+        # Only add air quality API source if it is present in the state
+        if "sources" in state and state["sources"]:
+            sources.extend(state["sources"])
+        answer = ""
         for chunk in self.llm.stream(prompt):
             if callback_handler is not None:
                 callback_handler.on_llm_new_token(chunk)
             else:
                 yield {"type": "token", "token": chunk}
+            answer += chunk
+        # Yield the synthesized answer before done
+        yield {"type": "answer", "content": answer, "sources": sources}
         yield {"type": "done", "sources": sources} 

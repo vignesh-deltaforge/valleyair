@@ -2,6 +2,7 @@ import streamlit as st
 from workflow import run_multiagent_workflow_streaming
 from datetime import datetime
 import torch
+import pandas as pd
 
 torch.classes.__path__ = []
 
@@ -16,6 +17,10 @@ if "pending_ai" not in st.session_state:
     st.session_state["pending_ai"] = False
 if "last_user_message" not in st.session_state:
     st.session_state["last_user_message"] = None
+if "pending_location" not in st.session_state:
+    st.session_state["pending_location"] = False
+if "location_context" not in st.session_state:
+    st.session_state["location_context"] = None
 
 # --- Helper: Format timestamp ---
 def format_time(ts):
@@ -29,6 +34,8 @@ with col2:
         st.session_state["tool_events"] = []
         st.session_state["pending_ai"] = False
         st.session_state["last_user_message"] = None
+        st.session_state["pending_location"] = False
+        st.session_state["location_context"] = None
         st.rerun()
 with col3:
     st.download_button(
@@ -61,15 +68,25 @@ with chat_container:
                     unsafe_allow_html=True,
                 )
             else:
-                st.markdown(msg["content"], unsafe_allow_html=True)
-            # Print sources as a markdown list after the answer (not in expander)
-            if msg["role"] == "ai" and msg.get("sources") is not None:
-                if msg["sources"]:
-                    st.markdown("**Sources:**")
-                    for src in msg["sources"]:
-                        st.markdown(f"- {src['url']}")
+                # Show air quality chart and answer if present
+                if msg.get("aq_timeseries") is not None:
+                    aq_timeseries = msg["aq_timeseries"]
+                    df = aq_timeseries if isinstance(aq_timeseries, pd.DataFrame) else pd.DataFrame(aq_timeseries)
+                    st.line_chart(df)
+                    if msg.get("content"):
+                        st.markdown(msg["content"], unsafe_allow_html=True)
+                    # For air quality answers with a chart, do NOT show sources
                 else:
-                    st.markdown("_No sources available._")
+                    if msg.get("content"):
+                        st.markdown(msg["content"], unsafe_allow_html=True)
+                    # For non-air-quality answers, show sources as before
+                    if msg["role"] == "ai" and msg.get("sources") is not None:
+                        if msg["sources"]:
+                            st.markdown("**Sources:**")
+                            for src in msg["sources"]:
+                                st.markdown(f"- {src['url']}")
+                        else:
+                            st.markdown("_No sources available._")
             st.caption(msg["timestamp"].strftime("%H:%M"))
 
 # --- Tool Events (subtle, not in chat) ---
@@ -104,8 +121,8 @@ class StreamlitCallbackHandler:
 
     def on_query_context(self, rewrites, keywords):
         self.query_context_content = (
-            "<b>Expanded Queries:</b><br>" + "<br>".join([f"- {r}" for r in rewrites]) +
-            "<br><b>BM25 Keywords:</b> " + ", ".join(keywords)
+            "<b>Rewritten Queries:</b><br>" + "<br>".join([f"- {r}" for r in rewrites]) +
+            "<br><b>Keywords:</b> " + ", ".join(keywords)
         )
 
     def on_done(self, sources):
@@ -132,6 +149,43 @@ if user_input and not st.session_state["pending_ai"]:
     st.session_state["last_user_message"] = user_input.strip()
     st.rerun()
 
+# --- Location collection mode ---
+from agents.air_quality_agent import AirQualityAgent
+from workflow import air_quality_agent
+if st.session_state["pending_location"] and st.session_state["last_user_message"]:
+    # Use the previous context as the original query
+    state = {
+        "user_query": st.session_state["location_context"],
+        "location_input": st.session_state["last_user_message"],
+        "messages": [],
+    }
+    callback_handler = StreamlitCallbackHandler(st.empty(), add_tool_event)
+    aq_timeseries = None
+    for event in air_quality_agent.stream(state, callback_handler=callback_handler):
+        if event["type"] == "air_quality":
+            aq_timeseries = event.get("data")  # This is now a DataFrame
+        elif event["type"] == "answer":
+            st.session_state["history"].append({
+                "role": "ai",
+                "content": event.get("content"),
+                "aq_timeseries": aq_timeseries,
+                "sources": [],
+                "timestamp": datetime.now(),
+            })
+        elif event["type"] == "location_needed":
+            st.session_state["history"].append({
+                "role": "ai",
+                "content": event["message"],
+                "sources": [],
+                "timestamp": datetime.now(),
+            })
+    st.session_state["pending_location"] = False
+    st.session_state["location_context"] = None
+    st.session_state["pending_ai"] = False
+    st.session_state["last_user_message"] = None
+    st.rerun()
+    st.stop()
+
 # --- Workflow execution after rerun ---
 if st.session_state["pending_ai"] and st.session_state["last_user_message"]:
     with chat_container:
@@ -140,27 +194,65 @@ if st.session_state["pending_ai"] and st.session_state["last_user_message"]:
     callback_handler = StreamlitCallbackHandler(ai_msg, add_tool_event)
     query_context_html = None
     ai_sources = []
+    location_needed = False
+    location_input = None
+    aq_timeseries = None
     for event in run_multiagent_workflow_streaming(st.session_state["last_user_message"], callback_handler=callback_handler):
         print("DEBUG: Event in app loop:", event)
-        if event["type"] == "tool" and event["tool"] == "QueryContextAgent":
+        if event["type"] == "tool" and event.get("tool") == "QueryContextAgent":
             callback_handler.on_query_context(event.get("rewrites", []), event.get("keywords", []))
             query_context_html = callback_handler.query_context_content
         elif event["type"] == "done":
             callback_handler.on_done(event.get("sources", []))
             ai_sources = event.get("sources", [])
-    if query_context_html:
-        st.session_state["history"].append({
-            "role": "query_context",
-            "content": query_context_html,
-            "timestamp": datetime.now(),
-        })
-    print("DEBUG: AI sources:", ai_sources)
-    st.session_state["history"].append({
-        "role": "ai",
-        "content": callback_handler.streamed_answer,
-        "sources": ai_sources if ai_sources else [],
-        "timestamp": datetime.now(),
-    })
+        elif event["type"] == "location_needed":
+            st.session_state["pending_location"] = True
+            st.session_state["location_context"] = st.session_state["last_user_message"]
+            st.session_state["history"].append({
+                "role": "ai",
+                "content": event["message"],
+                "sources": [],
+                "timestamp": datetime.now(),
+            })
+            st.session_state["pending_ai"] = False
+            st.session_state["last_user_message"] = None
+            st.rerun()
+            st.stop()
+        elif event["type"] == "air_quality":
+            aq_timeseries = event.get("data")  # This is now a DataFrame
+        elif event["type"] == "answer":
+            # If this is an air quality answer, attach aq_timeseries and empty sources
+            if aq_timeseries is not None:
+                if query_context_html:
+                    st.session_state["history"].append({
+                        "role": "query_context",
+                        "content": query_context_html,
+                        "timestamp": datetime.now(),
+                    })
+                    query_context_html = None
+                st.session_state["history"].append({
+                    "role": "ai",
+                    "content": event.get("content"),
+                    "aq_timeseries": aq_timeseries,
+                    "sources": [],
+                    "timestamp": datetime.now(),
+                })
+                aq_timeseries = None  # Reset for next message
+            else:
+                # General answer: append query_context first if present, then answer
+                if query_context_html:
+                    st.session_state["history"].append({
+                        "role": "query_context",
+                        "content": query_context_html,
+                        "timestamp": datetime.now(),
+                    })
+                    query_context_html = None
+                st.session_state["history"].append({
+                    "role": "ai",
+                    "content": event.get("content"),
+                    "sources": event.get("sources") if event.get("sources") else [],
+                    "timestamp": datetime.now(),
+                })
     st.session_state["pending_ai"] = False
     st.session_state["last_user_message"] = None
     st.rerun()

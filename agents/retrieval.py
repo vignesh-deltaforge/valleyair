@@ -81,6 +81,6 @@ class SpecializedRetrievalAgent:
                 enriched_docs.append(enriched_doc)
             else:
                 enriched_docs.append(doc)
-        print("DEBUG: RetrievalAgent top_docs:", top_docs)
-        print("DEBUG: RetrievalAgent enriched_docs:", enriched_docs)
+        # print("DEBUG: RetrievalAgent top_docs:", top_docs)
+        # print("DEBUG: RetrievalAgent enriched_docs:", enriched_docs)
         return {**state, "retrieved_docs": enriched_docs} 

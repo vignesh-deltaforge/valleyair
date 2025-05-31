@@ -11,6 +11,7 @@ A modular, production-grade Retrieval-Augmented Generation (RAG) system for the 
 - **Retrieves** relevant information using both semantic (vector) and keyword (BM25) search, then reranks with a cross-encoder.
 - **Synthesizes** answers using a powerful LLM (IBM watsonx Granite).
 - **Serves** a modern chatbot UI via Streamlit (with streaming, chat history, reset, and transcript download), Flask, and a CLI for power users.
+- **Air Quality Agent**: Real-time air quality answers and charts for San Joaquin Valley cities/counties, using Open-Meteo APIs and robust location validation.
 - **Privacy-first**: All chat is stateless and not stored server-side.
 
 ---
@@ -23,6 +24,9 @@ A modular, production-grade Retrieval-Augmented Generation (RAG) system for the 
 - **Download transcript**: Save your conversation as a text file.
 - **Context display**: See how your query was expanded and what keywords were used for retrieval.
 - **Source attribution**: Every answer cites its sources (or notes if none are available).
+- **Air quality charting**: For air quality queries, see a real-time chart of pollutant levels (PM2.5, Ozone, etc.) for your location, powered by Open-Meteo.
+- **Conversational location prompts**: If a location is missing or invalid, the chatbot will ask for it in the chat, and your next message is treated as the location.
+- **Robust error handling**: The UI and backend handle missing/null values, LLM quirks, and out-of-area queries gracefully.
 - **No data retention**: Your chat is private and not stored on the server.
 
 ---
@@ -37,7 +41,9 @@ A modular, production-grade Retrieval-Augmented Generation (RAG) system for the 
 ├── agents/                # All agent logic for the multi-step workflow
 │   ├── query_context.py   # Query rewriting and keyword extraction agent
 │   ├── retrieval.py       # Specialized retrieval agent (BM25 + vector + cross-encoder)
-│   └── synthesis.py       # Response synthesis agents (sync/streaming)
+│   ├── synthesis.py       # Response synthesis agents (sync/streaming)
+│   ├── air_quality_agent.py # AirQualityAgent for Open-Meteo API, location validation, and charting
+│   └── air_quality_tools.py # OpenMeteoTools for geocoding, validation, and API calls
 ├── workflow.py            # LangGraph workflow and runner functions
 ├── app.py                 # Streamlit chat app (modern UI)
 ├── chat_app.py            # Entry point for CLI and Flask app
@@ -65,8 +71,10 @@ A modular, production-grade Retrieval-Augmented Generation (RAG) system for the 
 
 ### 3. **Conversational RAG Chatbot**
 - **User query** enters the LangGraph workflow (see below).
+- **QueryClassifierTool**: Classifies the query as 'air_quality' or 'general' for conditional routing.
 - **QueryContextAgent**: Rewrites the query and generates BM25 keywords.
 - **SpecializedRetrievalAgent**: Retrieves relevant docs using both BM25 and vector search, then reranks with a cross-encoder.
+- **AirQualityAgent**: For air quality queries, validates location, fetches Open-Meteo data, and streams both a chart and a synthesized answer.
 - **ResponseSynthesisAgent**/**StreamingResponseSynthesisAgent**: Synthesizes a concise, helpful answer using the LLM and retrieved context, with streaming support for the UI.
 
 ---
@@ -75,18 +83,32 @@ A modular, production-grade Retrieval-Augmented Generation (RAG) system for the 
 
 ```mermaid
 graph TD
-    A((User Query)) -->|Query| B[QueryContextAgent<br>Rewrites Query<br>Extracts BM25 Keywords]
-    B -->|Rewrites + Keywords| C[SpecializedRetrievalAgent<br>BM25 + Vector Search<br>Cross-Encoder Reranking]
-    C -->|Retrieved Documents| D[ResponseSynthesisAgent<br>Generates Answer<br>Compiles Sources]
-    D -->|Answer + Sources| E((Final Response))
+    A((User Query)) -->|Query| B[QueryClassifierTool<br>Identify Query Type]
+    B -->|Air Quality| C[AirQualityAgent]
+    B -->|General| D[QueryContextAgent<br>Rewrites Query<br>Extracts Keywords]
+    C --> E[LocationParserTool<br>Extract City/County/Zip<br>Geocode to Lat/Lon]
+    E -->|Prompt if Missing| F[HumanInputNode<br>User Enters Location]
+    F --> E
+    E --> G[OpenMeteoAirQualityTool<br>Fetch AQI, PM2.5, Ozone]
+    G --> H[ResponseSynthesisAgent<br>Generate Answer]
+    D --> I[SpecializedRetrievalAgent<br>BM25 + Vector Search<br>Reranking]
+    I --> H
+    H -->|Answer + Sources| J((Final Response))
 
     style A fill:#f0f8ff,stroke:#4682b4
-    style E fill:#f0f8ff,stroke:#4682b4
+    style J fill:#f0f8ff,stroke:#4682b4
     style B fill:#e6e6fa,stroke:#6a5acd
     style C fill:#e6e6fa,stroke:#6a5acd
     style D fill:#e6e6fa,stroke:#6a5acd
+    style E fill:#e6e6fa,stroke:#6a5acd
+    style F fill:#e6e6fa,stroke:#6a5acd
+    style G fill:#e6e6fa,stroke:#6a5acd
+    style H fill:#e6e6fa,stroke:#6a5acd
+    style I fill:#e6e6fa,stroke:#6a5acd
 ```
 
+- **QueryClassifierTool**: Classifies queries as 'air_quality' or 'general' for conditional routing.
+- **AirQualityAgent**: Handles air quality queries, robustly extracts and validates location, fetches Open-Meteo data, and streams both a chart (time series DataFrame) and a synthesized answer. Handles LLM quirks and user input errors gracefully.
 - **QueryContextAgent**: Expands the user query for better retrieval (rewrites + BM25 keywords).
 - **SpecializedRetrievalAgent**: Combines BM25 and vector search, deduplicates, and reranks results with a cross-encoder.
 - **ResponseSynthesisAgent**/**StreamingResponseSynthesisAgent**: Uses the LLM to generate a final answer, citing sources, with streaming for the UI.
@@ -97,17 +119,23 @@ graph TD
 
 ### `app.py`
 - Streamlit chat app with real-time streaming, chat history, reset, transcript download, and context display.
+- **Air quality charting**: For air quality queries, displays a real-time chart and answer. For general queries, displays answer and sources.
+- **Conversational location prompts**: If a location is missing or invalid, the chatbot prompts for it in the chat, and the next user message is treated as the location.
+- **Robust chat history logic**: Ensures both query context and answers are always visible in the correct order for both air quality and general queries.
 - Stateless: All chat history is session-based and not stored server-side.
 
 ### `workflow.py`
 - Wires up the agents using LangGraph.
 - `run_multiagent_workflow(user_query)`: Synchronous answer.
 - `run_multiagent_workflow_streaming(user_query, callback_handler)`: Streaming answer (for Streamlit UI), with callback support for real-time token and event updates.
+- **Conditional routing**: Uses QueryClassifierTool to route queries to AirQualityAgent or the general retrieval/synthesis pipeline.
 
 ### `agents/`
 - **query_context.py**: `QueryContextAgent` rewrites queries and generates keywords for hybrid retrieval.
 - **retrieval.py**: `SpecializedRetrievalAgent` performs hybrid retrieval (BM25 + vector), deduplication, and cross-encoder reranking.
-- **synthesis.py**: `ResponseSynthesisAgent` and `StreamingResponseSynthesisAgent` generate answers, with streaming support for the UI.
+- **synthesis.py**: `ResponseSynthesisAgent` and `StreamingResponseSynthesisAgent` generate answers, with streaming support for the UI. Now always yields an 'answer' event for general queries.
+- **air_quality_agent.py**: `AirQualityAgent` robustly extracts and validates location, fetches Open-Meteo data, and streams both a chart and a synthesized answer. Handles LLM quirks and user input errors gracefully.
+- **air_quality_tools.py**: `OpenMeteoTools` for geocoding, validation, and Open-Meteo API calls. Accepts only valid San Joaquin Valley locations.
 
 ### `vectorstore.py`
 - Connects to Elasticsearch.
@@ -141,6 +169,9 @@ The Streamlit UI leverages a **callback handler** and event-driven streaming to 
 - `token`: A new token from the LLM (for streaming answer display)
 - `tool`: A tool/agent has started or completed an action (e.g., retrieval)
 - `query_context`: The agent has generated query rewrites and keywords
+- `answer`: The synthesized answer and sources (for both air quality and general queries)
+- `air_quality`: The time series DataFrame for charting (air quality queries only)
+- `location_needed`: The agent needs a valid location (air quality queries only)
 - `done`: The answer and sources are finalized
 
 **Relevant code:**
@@ -199,9 +230,9 @@ python chat_app.py --test
 
 - **Crawling**: `crawl_data.py` uses `crawl4ai` to fetch and clean content, saving as Markdown.
 - **Indexing**: `index_data.py` chunks, embeds, and indexes content into Elasticsearch.
-- **Query Handling**: User queries are rewritten, expanded, and used for both BM25 and vector search.
+- **Query Handling**: User queries are classified, rewritten, expanded, and used for both BM25 and vector search.
 - **Retrieval**: Combines keyword and semantic search, deduplicates, and reranks with a cross-encoder.
-- **Synthesis**: LLM generates a concise answer, citing sources, with streaming for the UI.
+- **Synthesis**: LLM generates a concise answer, citing sources, with streaming for the UI. Air quality answers include a real-time chart.
 - **Web/CLI/Streamlit**: All use the same backend workflow for consistent answers.
 
 ---
