@@ -45,6 +45,7 @@ class ResponseSynthesisAgent:
         prompt = SYTHESIS_PROMPT.format(context=context, question=user_query)
         answer = self.llm.invoke(prompt)
         sources = []
+        seen_urls = set()
         for doc in docs:
             meta = {}
             if hasattr(doc, 'metadata') and doc.metadata:
@@ -59,7 +60,10 @@ class ResponseSynthesisAgent:
                 meta["url"] = "No URL"
             if not meta.get("title"):
                 meta["title"] = "Untitled"
-            sources.append(meta)
+            url = meta["url"]
+            if url not in seen_urls:
+                sources.append(meta)
+                seen_urls.add(url)
         # Only add air quality API source if it is present in the state
         if "sources" in state and state["sources"]:
             sources.extend(state["sources"])
@@ -78,6 +82,7 @@ class StreamingResponseSynthesisAgent:
         user_query = state.get("user_query", "")
         prompt = SYTHESIS_PROMPT.format(context=context, question=user_query)
         sources = []
+        seen_urls = set()
         for doc in docs:
             meta = {}
             if hasattr(doc, 'metadata') and doc.metadata:
@@ -92,10 +97,17 @@ class StreamingResponseSynthesisAgent:
                 meta["url"] = "No URL"
             if not meta.get("title"):
                 meta["title"] = "Untitled"
-            sources.append(meta)
+            url = meta["url"]
+            if url not in seen_urls:
+                sources.append(meta)
+                seen_urls.add(url)
         # Only add air quality API source if it is present in the state
         if "sources" in state and state["sources"]:
-            sources.extend(state["sources"])
+            for extra in state["sources"]:
+                url = extra.get("url", "No URL")
+                if url not in seen_urls:
+                    sources.append(extra)
+                    seen_urls.add(url)
         answer = ""
         for chunk in self.llm.stream(prompt):
             if callback_handler is not None:

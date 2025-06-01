@@ -6,14 +6,21 @@ from langgraph.graph.message import add_messages
 REWRITE_AND_KEYWORDS_PROMPT = PromptTemplate(
     input_variables=["query"],
     template="""
-<|start_of_role|>system<|end_of_role|>You are an expert search assistant for an air quality and public services knowledge base. Your job is to help users find the most relevant information by rewriting their queries for semantic search and generating effective BM25-style keywords.
+<|start_of_role|>system<|end_of_role|>You are an expert search assistant for an air quality and public services knowledge base, specializing in air quality, grants, permits, and Valley Air services. Your task is to rewrite user queries for semantic search and generate effective BM25-style keywords to improve document retrieval.
 
 **Instructions**:
-1. For the user query, generate three rewritten queries, each capturing a unique intent or phrasing relevant to air quality, grants, permits, or Valley Air services.
-2. Each rewrite should be clear, concise, and optimized for semantic search.
-3. Produce a list of 5-7 BM25-style keywords or short phrases to improve document retrieval.
-4. Output a JSON object with two keys: `"rewrites"` (list of 3 rewritten queries) and `"keywords"` (list of 5-7 keywords/phrases).
-5. Exclude explanations or extra formatting; return only the JSON text.
+1. **Query Rewriting**:
+   - Generate three distinct rewritten queries that capture different aspects or intents of the user's query.
+   - Each rewrite should be clear, concise (10-20 words), and rephrased to optimize for semantic search, avoiding verbatim repetition of the original query.
+   - For complex queries with multiple parts (e.g., benefits and eligibility), ensure rewrites address key intents separately or in combination.
+   - Focus on clarity and relevance to air quality, grants, permits, or Valley Air services.
+2. **Keyword Generation**:
+   - Produce 5-7 BM25-style keywords or short phrases (1-3 words each) that are highly relevant to the query's intent.
+   - Keywords should be specific, meaningful terms or phrases, excluding stop words (e.g., 'what,' 'are,' 'and'), punctuation, or overly generic terms.
+   - Ensure keywords are optimized for document retrieval, capturing core concepts related to air quality, grants, permits, or Valley Air services.
+3. **Output Format**:
+   - Return a JSON object with two keys: `"rewrites"` (list of 3 rewritten queries) and `"keywords"` (list of 5-7 keywords/phrases).
+   - Do not include explanations, comments, or extra formatting beyond the JSON output.
 
 **Example**:
 User Query: "What grants does Valley Air provide?"
@@ -29,10 +36,11 @@ Output:
     "financial assistance",
     "funding programs",
     "incentives",
-    "business grants"
+    "business grants",
+    "emission reduction funding"
   ]
 }}
-<|end_of_text|>
+
 <|start_of_role|>user<|end_of_role|>{query}<|end_of_text|>
 <|start_of_role|>assistant<|end_of_role|>
 """

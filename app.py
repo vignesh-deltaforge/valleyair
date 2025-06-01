@@ -191,6 +191,9 @@ if st.session_state["pending_ai"] and st.session_state["last_user_message"]:
     with chat_container:
         ai_msg_placeholder = st.chat_message("ai")
         ai_msg = ai_msg_placeholder.empty()
+        # Show a thinking indicator before streaming starts
+        with ai_msg:
+            st.markdown("<span style='color:gray;font-style:italic;'>🤔 Thinking...</span>", unsafe_allow_html=True)
     callback_handler = StreamlitCallbackHandler(ai_msg, add_tool_event)
     query_context_html = None
     ai_sources = []
